@@ -1,0 +1,102 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-erp_user}:${POSTGRES_PASSWORD:-erp_pass}@postgres:5432/${POSTGRES_DB:-erp_case}
+    - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+    - POSTGRES_HOST=postgres
+    - POSTGRES_PORT=5432
+    - POSTGRES_USER=${POSTGRES_USER:-erp_user}
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-erp_pass}
+    - POSTGRES_DB=${POSTGRES_DB:-erp_case}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./pentaho:/opt/pentaho
+  networks:
+    - erp_network
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-erp_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-erp_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-erp_case}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - erp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-erp_user} -d ${POSTGRES_DB:-erp_case}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db init
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@rpe.tech
+        echo "Airflow init complete."
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: airflow scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname) || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+networks:
+  erp_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
