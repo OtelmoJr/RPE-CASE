@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Airflow
+logs/
+airflow.db
+airflow-webserver.pid
+airflow.cfg
+
+# Docker
+docker-compose.override.yml
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pentaho
+pentaho/data-integration/
+*.log
