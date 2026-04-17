@@ -40,6 +40,8 @@ O PostgreSQL ta la so pro metadata do Airflow (scheduler, DAG runs, etc). Os dad
 
 ---
 
+![alt text](image-1.png)
+
 ## Por que DuckDB?
 
 - Arquivo unico, sem servidor, zero config
