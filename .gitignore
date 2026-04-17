@@ -36,8 +36,10 @@ pentaho/data-integration/
 # DuckDB
 data/*.duckdb
 data/*.duckdb.wal
+*.duckdb
 
 # dbt
 dbt_selic/target/
 dbt_selic/logs/
 dbt_selic/dbt_packages/
+dbt_selic/.user.yml
