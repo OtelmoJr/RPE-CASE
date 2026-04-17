@@ -37,5 +37,7 @@ RUN pip install --no-cache-dir \
     psycopg2-binary \
     requests \
     duckdb==1.1.3 \
+    "jinja2>=3.1.2,<3.2" \
+    "MarkupSafe>=2.1,<2.2" \
     dbt-core==1.8.* \
     dbt-duckdb==1.8.*
