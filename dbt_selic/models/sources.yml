@@ -2,6 +2,7 @@ version: 2
 
 sources:
   - name: selic
+    schema: main
     description: >
       Tabelas populadas pelo Pentaho PDI apos transformacao dos dados brutos do BCB.
       A tab_final funciona como camada silver deste pipeline.
