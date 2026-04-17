@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS tab_raw (
     loaded_at  TIMESTAMP  DEFAULT current_timestamp
 );
 
--- tab_final: dados transformados pelo Pentaho PDI (7 operações)
+-- tab_final: dados transformados pelo Pentaho PDI (5 steps, SQL analitico)
 CREATE TABLE IF NOT EXISTS tab_final (
     data_original     VARCHAR,
     data_formatada    DATE,
