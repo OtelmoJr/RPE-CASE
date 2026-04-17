@@ -1,0 +1,570 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transformation>
+  <info>
+    <name>transform_selic</name>
+    <description>Transformação da taxa Selic diária: tab_raw → tab_final (7 operações)</description>
+    <extended_description>
+      Case técnico RPE — Pipeline Airflow + Pentaho PDI.
+      Lê dados brutos da tab_raw (API BCB série 11), aplica 7 transformações
+      e grava resultado em tab_final.
+    </extended_description>
+    <trans_version/>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters/>
+    <log>
+      <trans-log-table>
+        <connection/>
+        <schema/>
+        <table/>
+        <size_limit_lines/>
+        <interval/>
+        <timeout_days/>
+      </trans-log-table>
+    </log>
+    <maxdate>
+      <connection/>
+      <table/>
+      <field/>
+      <offset>0.0</offset>
+      <maxdiff>0.0</maxdiff>
+    </maxdate>
+    <size_rowset>10000</size_rowset>
+    <sleep_time_empty>50</sleep_time_empty>
+    <sleep_time_full>50</sleep_time_full>
+    <unique_connections>N</unique_connections>
+    <feedback_shown>Y</feedback_shown>
+    <feedback_size>50000</feedback_size>
+    <using_thread_priorities>Y</using_thread_priorities>
+    <shared_objects_file/>
+    <capture_step_performance>N</capture_step_performance>
+    <step_performance_capturing_delay>1000</step_performance_capturing_delay>
+    <step_performance_capturing_size_limit>100</step_performance_capturing_size_limit>
+    <created_user>admin</created_user>
+    <created_date>2024/01/01 00:00:00.000</created_date>
+    <modified_user>admin</modified_user>
+    <modified_date>2024/01/01 00:00:00.000</modified_date>
+    <key_for_session_key>H4sIAAAAAAAAAAMAAAAAAAAAAAA=</key_for_session_key>
+    <is_key_private>N</is_key_private>
+  </info>
+
+  <!-- ============================================================ -->
+  <!-- Conexão JDBC PostgreSQL                                      -->
+  <!-- ============================================================ -->
+  <connection>
+    <name>erp_postgres</name>
+    <server>postgres</server>
+    <type>POSTGRESQL</type>
+    <access>Native</access>
+    <database>erp_case</database>
+    <port>5432</port>
+    <username>erp_user</username>
+    <password>erp_pass</password>
+    <servername/>
+    <data_tablespace/>
+    <index_tablespace/>
+    <attributes>
+      <attribute>
+        <code>FORCE_IDENTIFIERS_TO_LOWERCASE</code>
+        <attribute>N</attribute>
+      </attribute>
+      <attribute>
+        <code>FORCE_IDENTIFIERS_TO_UPPERCASE</code>
+        <attribute>N</attribute>
+      </attribute>
+      <attribute>
+        <code>IS_CLUSTERED</code>
+        <attribute>N</attribute>
+      </attribute>
+      <attribute>
+        <code>PORT_NUMBER</code>
+        <attribute>5432</attribute>
+      </attribute>
+      <attribute>
+        <code>PRESERVE_RESERVED_WORD_CASE</code>
+        <attribute>Y</attribute>
+      </attribute>
+      <attribute>
+        <code>QUOTE_ALL_FIELDS</code>
+        <attribute>N</attribute>
+      </attribute>
+      <attribute>
+        <code>SUPPORTS_BOOLEAN_DATA_TYPE</code>
+        <attribute>Y</attribute>
+      </attribute>
+      <attribute>
+        <code>SUPPORTS_TIMESTAMP_DATA_TYPE</code>
+        <attribute>Y</attribute>
+      </attribute>
+      <attribute>
+        <code>USE_POOLING</code>
+        <attribute>N</attribute>
+      </attribute>
+    </attributes>
+  </connection>
+
+  <order>
+    <!-- Step 1 → Step 2 -->
+    <hop>
+      <from>Ler tab_raw</from>
+      <to>Filtrar Nulos</to>
+      <enabled>Y</enabled>
+    </hop>
+    <!-- Step 2 (true) → Step 3 -->
+    <hop>
+      <from>Filtrar Nulos</from>
+      <to>Renomear e Converter Tipos</to>
+      <enabled>Y</enabled>
+    </hop>
+    <!-- Step 3 → Step 4 -->
+    <hop>
+      <from>Renomear e Converter Tipos</from>
+      <to>Extrair Componentes Data</to>
+      <enabled>Y</enabled>
+    </hop>
+    <!-- Step 4 → Step 5 -->
+    <hop>
+      <from>Extrair Componentes Data</from>
+      <to>Calculos e Classificacao</to>
+      <enabled>Y</enabled>
+    </hop>
+    <!-- Step 5 → Step 6 -->
+    <hop>
+      <from>Calculos e Classificacao</from>
+      <to>Gravar tab_final</to>
+      <enabled>Y</enabled>
+    </hop>
+  </order>
+
+  <!-- ============================================================ -->
+  <!-- STEP 1: Table Input — Ler dados brutos de tab_raw            -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Ler tab_raw</name>
+    <type>TableInput</type>
+    <description>Leitura dos dados brutos da tabela tab_raw (API BCB sem alteração)</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <connection>erp_postgres</connection>
+    <sql>SELECT data, valor FROM tab_raw WHERE valor IS NOT NULL AND valor != ''</sql>
+    <limit>0</limit>
+    <lookup/>
+    <execute_each_row>N</execute_each_row>
+    <variables_active>N</variables_active>
+    <lazy_conversion_active>N</lazy_conversion_active>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>100</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <!-- ============================================================ -->
+  <!-- STEP 2: Filter Rows — OP1: Filtro de nulos/vazios            -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Filtrar Nulos</name>
+    <type>FilterRows</type>
+    <description>OP1: Remove registros com valor nulo ou vazio</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <send_true_to>Renomear e Converter Tipos</send_true_to>
+    <send_false_to/>
+    <compare>
+      <condition>
+        <negated>N</negated>
+        <conditions>
+          <condition>
+            <negated>N</negated>
+            <leftvalue>valor</leftvalue>
+            <function>IS NOT NULL</function>
+            <rightvalue/>
+          </condition>
+          <condition>
+            <negated>N</negated>
+            <operator>AND</operator>
+            <leftvalue>valor</leftvalue>
+            <function>&lt;&gt;</function>
+            <rightvalue/>
+            <value>
+              <name>constant</name>
+              <type>String</type>
+              <text/>
+            </value>
+          </condition>
+        </conditions>
+      </condition>
+    </compare>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>280</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <!-- ============================================================ -->
+  <!-- STEP 3: Select Values — OP2 + OP3: Converter data e valor    -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Renomear e Converter Tipos</name>
+    <type>SelectValues</type>
+    <description>OP2: Conversão de data (String→Date). OP3: Conversão numérica (String→Number)</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <fields>
+      <!-- Manter campo data original -->
+      <field>
+        <name>data</name>
+        <rename>data_original</rename>
+      </field>
+      <!-- Duplicar data para conversão -->
+      <field>
+        <name>data</name>
+        <rename>data_formatada</rename>
+      </field>
+      <!-- Duplicar valor para conversão -->
+      <field>
+        <name>valor</name>
+        <rename>valor_diario</rename>
+      </field>
+    </fields>
+    <select_unspecified>N</select_unspecified>
+    <meta>
+      <!-- OP2: Conversão de data: string "dd/MM/yyyy" → Date -->
+      <changes>
+        <change>
+          <name>data_formatada</name>
+          <rename>data_formatada</rename>
+          <type>Date</type>
+          <length>-2</length>
+          <precision>-2</precision>
+          <conversion_mask>dd/MM/yyyy</conversion_mask>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol>.</decimal_symbol>
+          <grouping_symbol>,</grouping_symbol>
+          <currency_symbol/>
+          <storage_type/>
+        </change>
+        <!-- OP3: Conversão numérica: string → Number -->
+        <change>
+          <name>valor_diario</name>
+          <rename>valor_diario</rename>
+          <type>Number</type>
+          <length>10</length>
+          <precision>6</precision>
+          <conversion_mask>#.######</conversion_mask>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol>.</decimal_symbol>
+          <grouping_symbol>,</grouping_symbol>
+          <currency_symbol/>
+          <storage_type/>
+        </change>
+      </changes>
+    </meta>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>460</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <!-- ============================================================ -->
+  <!-- STEP 4: Calculator — OP4: Extrair ano, mês, dia da data      -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Extrair Componentes Data</name>
+    <type>Calculator</type>
+    <description>OP4: Extração de ano, mês e dia a partir de data_formatada</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <failIfNoFile>Y</failIfNoFile>
+    <calculation>
+      <field_name>ano</field_name>
+      <calc_type>YEAR_OF_DATE</calc_type>
+      <field_a>data_formatada</field_a>
+      <field_b/>
+      <field_c/>
+      <value_type>Integer</value_type>
+      <value_length>4</value_length>
+      <value_precision>0</value_precision>
+      <remove>N</remove>
+      <conversion_mask/>
+      <decimal_format/>
+      <grouping_format/>
+      <currency_format/>
+    </calculation>
+    <calculation>
+      <field_name>mes</field_name>
+      <calc_type>MONTH_OF_DATE</calc_type>
+      <field_a>data_formatada</field_a>
+      <field_b/>
+      <field_c/>
+      <value_type>Integer</value_type>
+      <value_length>2</value_length>
+      <value_precision>0</value_precision>
+      <remove>N</remove>
+      <conversion_mask/>
+      <decimal_format/>
+      <grouping_format/>
+      <currency_format/>
+    </calculation>
+    <calculation>
+      <field_name>dia</field_name>
+      <calc_type>DAY_OF_MONTH</calc_type>
+      <field_a>data_formatada</field_a>
+      <field_b/>
+      <field_c/>
+      <value_type>Integer</value_type>
+      <value_length>2</value_length>
+      <value_precision>0</value_precision>
+      <remove>N</remove>
+      <conversion_mask/>
+      <decimal_format/>
+      <grouping_format/>
+      <currency_format/>
+    </calculation>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>640</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <!-- ============================================================ -->
+  <!-- STEP 5: Modified JavaScript — OP5 + OP6 + OP7                -->
+  <!--   OP5: Anualização da Selic                                  -->
+  <!--   OP6: Classificação condicional                             -->
+  <!--   OP7: Uppercase + concatenação de string                    -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Calculos e Classificacao</name>
+    <type>ScriptValueMod</type>
+    <description>OP5: Anualização Selic. OP6: Classificação. OP7: Uppercase + concatenação</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <compatible>N</compatible>
+    <optimizationLevel>9</optimizationLevel>
+    <jsScripts>
+      <jsScript>
+        <jsScript_type>0</jsScript_type>
+        <jsScript_name>Script 1</jsScript_name>
+        <jsScript_script>
+// OP5: Cálculo de anualização da Selic
+// Fórmula: ((1 + taxa_diaria/100) ^ 252 - 1) * 100
+// 252 = dias úteis no ano (convenção mercado brasileiro)
+var vd = valor_diario;
+var valor_anualizado;
+
+if (vd != null &amp;&amp; !isNaN(vd)) {
+    valor_anualizado = (Math.pow(1 + vd / 100, 252) - 1) * 100;
+    valor_anualizado = Math.round(valor_anualizado * 10000) / 10000;
+} else {
+    valor_anualizado = null;
+}
+
+// OP6: Classificação condicional baseada na Selic anualizada
+var classificacao;
+if (valor_anualizado == null) {
+    classificacao = "INDEFINIDA";
+} else if (valor_anualizado > 13.0) {
+    classificacao = "ALTA";
+} else if (valor_anualizado >= 10.0) {
+    classificacao = "MODERADA";
+} else {
+    classificacao = "BAIXA";
+}
+
+// OP7: Uppercase do indicador + concatenação de string na descrição
+var indicador = "SELIC";
+var descricao = "TAXA SELIC - " + classificacao;
+        </jsScript_script>
+      </jsScript>
+    </jsScripts>
+    <fields>
+      <field>
+        <name>valor_anualizado</name>
+        <rename>valor_anualizado</rename>
+        <type>Number</type>
+        <length>10</length>
+        <precision>4</precision>
+        <replace>N</replace>
+      </field>
+      <field>
+        <name>classificacao</name>
+        <rename>classificacao</rename>
+        <type>String</type>
+        <length>20</length>
+        <precision>-1</precision>
+        <replace>N</replace>
+      </field>
+      <field>
+        <name>indicador</name>
+        <rename>indicador</rename>
+        <type>String</type>
+        <length>50</length>
+        <precision>-1</precision>
+        <replace>N</replace>
+      </field>
+      <field>
+        <name>descricao</name>
+        <rename>descricao</rename>
+        <type>String</type>
+        <length>100</length>
+        <precision>-1</precision>
+        <replace>N</replace>
+      </field>
+    </fields>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>820</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <!-- ============================================================ -->
+  <!-- STEP 6: Table Output — Gravar resultado em tab_final         -->
+  <!-- ============================================================ -->
+  <step>
+    <name>Gravar tab_final</name>
+    <type>TableOutput</type>
+    <description>Grava dados transformados na tabela tab_final</description>
+    <distribute>Y</distribute>
+    <custom_distribution/>
+    <copies>1</copies>
+    <partitioning>
+      <type>none</type>
+      <schema_name/>
+    </partitioning>
+    <connection>erp_postgres</connection>
+    <schema/>
+    <table>tab_final</table>
+    <commit>1000</commit>
+    <truncate>Y</truncate>
+    <ignore_errors>N</ignore_errors>
+    <use_batch>Y</use_batch>
+    <specify_fields>Y</specify_fields>
+    <partitioning_enabled>N</partitioning_enabled>
+    <partitioning_field/>
+    <partitioning_daily>N</partitioning_daily>
+    <partitioning_monthly>Y</partitioning_monthly>
+    <tablename_in_field>N</tablename_in_field>
+    <tablename_field/>
+    <tablename_in_table>Y</tablename_in_table>
+    <return_keys>N</return_keys>
+    <return_field/>
+    <fields>
+      <field>
+        <column_name>data_original</column_name>
+        <stream_name>data_original</stream_name>
+      </field>
+      <field>
+        <column_name>data_formatada</column_name>
+        <stream_name>data_formatada</stream_name>
+      </field>
+      <field>
+        <column_name>ano</column_name>
+        <stream_name>ano</stream_name>
+      </field>
+      <field>
+        <column_name>mes</column_name>
+        <stream_name>mes</stream_name>
+      </field>
+      <field>
+        <column_name>dia</column_name>
+        <stream_name>dia</stream_name>
+      </field>
+      <field>
+        <column_name>valor_diario</column_name>
+        <stream_name>valor_diario</stream_name>
+      </field>
+      <field>
+        <column_name>valor_anualizado</column_name>
+        <stream_name>valor_anualizado</stream_name>
+      </field>
+      <field>
+        <column_name>classificacao</column_name>
+        <stream_name>classificacao</stream_name>
+      </field>
+      <field>
+        <column_name>descricao</column_name>
+        <stream_name>descricao</stream_name>
+      </field>
+      <field>
+        <column_name>indicador</column_name>
+        <stream_name>indicador</stream_name>
+      </field>
+    </fields>
+    <cluster_schema/>
+    <remotesteps>
+      <input/>
+      <output/>
+    </remotesteps>
+    <GUI>
+      <xloc>1000</xloc>
+      <yloc>200</yloc>
+      <draw>Y</draw>
+    </GUI>
+  </step>
+
+  <step_error_handling/>
+  <slave-step-copy-partition-distribution/>
+  <slave_transformation>N</slave_transformation>
+</transformation>
