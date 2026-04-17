@@ -1,0 +1,7 @@
+selic:
+  target: prod
+  outputs:
+    prod:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '/opt/airflow/data/selic.duckdb') }}"
+      threads: 1

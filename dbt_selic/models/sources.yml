@@ -1,0 +1,35 @@
+version: 2
+
+sources:
+  - name: selic
+    description: >
+      Tabelas populadas pelo Pentaho PDI apos transformacao dos dados brutos do BCB.
+      A tab_final funciona como camada silver deste pipeline.
+    tables:
+      - name: tab_final
+        description: >
+          Selic diaria transformada — dados tipados, anualizados e classificados.
+          Gerada pelo Pentaho PDI a partir da tab_raw.
+        columns:
+          - name: data_original
+            description: "Data no formato dd/mm/yyyy como veio da API"
+            tests:
+              - not_null
+              - unique
+          - name: data_formatada
+            description: "Data convertida pra tipo DATE"
+            tests:
+              - not_null
+          - name: valor_diario
+            description: "Taxa Selic diaria em formato numerico"
+            tests:
+              - not_null
+          - name: valor_anualizado
+            description: "Taxa anualizada: ((1+r/100)^252 -1)*100"
+            tests:
+              - not_null
+          - name: classificacao
+            description: "ALTA (>13%), MODERADA (10-13%), BAIXA (<10%)"
+            tests:
+              - accepted_values:
+                  values: ['ALTA', 'MODERADA', 'BAIXA']

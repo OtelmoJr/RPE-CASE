@@ -1,20 +1,17 @@
 """
 DAG: bcb_selic_pipeline
-=======================
-Pipeline de ingestão e transformação da taxa Selic diária (BCB série 11).
+Pipeline de ingestao e transformacao da taxa Selic diaria (BCB serie 11).
 
-Fase 1 (PythonOperator): Extrai dados da API do Banco Central e carrega em tab_raw.
-Fase 2 (BashOperator):   Executa transformação Pentaho PDI (pan.sh) que lê tab_raw,
-                          aplica 7 operações de transformação e grava em tab_final.
-
-Case técnico para RPE — fintech de pagamentos para o varejo.
+Task 1 (Python)  — extrai da API do BCB e carrega bruto em tab_raw (DuckDB).
+Task 2 (Bash)    — chama o Pentaho PDI (pan.sh) que le tab_raw, transforma e grava tab_final.
+Task 3 (Bash)    — roda dbt pra materializar a camada gold e executar testes de qualidade.
 """
 
-import json
 import logging
+import os
 from datetime import datetime, timedelta
 
-import psycopg2
+import duckdb
 import requests
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -23,20 +20,15 @@ from airflow.operators.python import PythonOperator
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configurações
+# Config — num projeto real eu usaria Airflow Variables ou Vault.
+# Pra esse case, hardcoded mesmo pra simplificar a avaliacao.
 # ---------------------------------------------------------------------------
 BCB_API_URL = (
     "https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados"
     "?formato=json&dataInicial={data_inicial}&dataFinal={data_final}"
 )
 
-PG_CONN_PARAMS = {
-    "host": "postgres",
-    "port": 5432,
-    "dbname": "erp_case",
-    "user": "erp_user",
-    "password": "erp_pass",
-}
+DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/opt/airflow/data/selic.duckdb")
 
 PENTAHO_CMD = (
     "/opt/pentaho/data-integration/pan.sh "
@@ -44,92 +36,120 @@ PENTAHO_CMD = (
     "-level=Basic"
 )
 
+DBT_CMD = "cd /opt/airflow/dbt_selic && dbt run --profiles-dir . && dbt test --profiles-dir ."
+
 # ---------------------------------------------------------------------------
-# Task 1: Extrair dados da API BCB e carregar em tab_raw
+# DDL — garante que as tabelas existem antes de qualquer operacao
+# ---------------------------------------------------------------------------
+DDL_TAB_RAW = """
+CREATE TABLE IF NOT EXISTS tab_raw (
+    data       VARCHAR    NOT NULL,
+    valor      VARCHAR,
+    loaded_at  TIMESTAMP  DEFAULT current_timestamp
+)
+"""
+
+DDL_TAB_FINAL = """
+CREATE TABLE IF NOT EXISTS tab_final (
+    data_original     VARCHAR,
+    data_formatada    DATE,
+    ano               INTEGER,
+    mes               INTEGER,
+    dia               INTEGER,
+    valor_diario      DOUBLE,
+    valor_anualizado  DOUBLE,
+    classificacao     VARCHAR,
+    descricao         VARCHAR,
+    indicador         VARCHAR,
+    processed_at      TIMESTAMP  DEFAULT current_timestamp
+)
+"""
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Extrair dados da API BCB e carregar em tab_raw (DuckDB)
 # ---------------------------------------------------------------------------
 def extract_and_load_raw(**context):
     """
-    Extrai a taxa Selic diária (série 11) da API do Banco Central do Brasil
-    e insere os dados SEM NENHUMA ALTERAÇÃO em tab_raw (PostgreSQL).
+    Puxa a Selic diaria (serie 11) do BCB e joga em tab_raw sem mexer em nada.
+    Idempotencia: deleta registros do periodo antes de inserir, assim re-execucoes
+    nao duplicam dados e tambem nao apagam historico de outros periodos.
     """
-    # Calcula período: últimos 12 meses
     data_final = datetime.now()
     data_inicial = data_final - timedelta(days=365)
 
-    url = BCB_API_URL.format(
-        data_inicial=data_inicial.strftime("%d/%m/%Y"),
-        data_final=data_final.strftime("%d/%m/%Y"),
-    )
+    data_ini_str = data_inicial.strftime("%d/%m/%Y")
+    data_fim_str = data_final.strftime("%d/%m/%Y")
 
+    url = BCB_API_URL.format(data_inicial=data_ini_str, data_final=data_fim_str)
     logger.info("Chamando API BCB: %s", url)
 
-    # --- Extração ---
     response = requests.get(url, timeout=60)
     response.raise_for_status()
 
     dados = response.json()
-
     if not dados:
-        raise ValueError("API BCB retornou lista vazia. Verifique o período.")
+        raise ValueError("API BCB retornou lista vazia — verificar periodo.")
 
     logger.info("API retornou %d registros.", len(dados))
 
-    # --- Carga em tab_raw ---
-    conn = psycopg2.connect(**PG_CONN_PARAMS)
+    conn = duckdb.connect(DUCKDB_PATH)
     try:
-        with conn.cursor() as cur:
-            # Idempotência: limpa tabela antes de recarregar
-            cur.execute("TRUNCATE TABLE tab_raw;")
+        conn.execute(DDL_TAB_RAW)
+        conn.execute(DDL_TAB_FINAL)
 
-            # Insert em batch — dados SEM alteração (requisito)
-            insert_sql = "INSERT INTO tab_raw (data, valor) VALUES (%s, %s)"
-            registros = [(item["data"], item["valor"]) for item in dados]
+        # Idempotencia: limpa so o range que vamos reinserir
+        conn.execute(
+            "DELETE FROM tab_raw WHERE data IN (SELECT UNNEST($1::VARCHAR[]))",
+            [[item["data"] for item in dados]],
+        )
 
-            cur.executemany(insert_sql, registros)
+        # Dados brutos, sem alteracao nenhuma — requisito do edital
+        conn.executemany(
+            "INSERT INTO tab_raw (data, valor) VALUES ($1, $2)",
+            [(item["data"], item["valor"]) for item in dados],
+        )
 
-            conn.commit()
-            logger.info(
-                "Carga concluída: %d registros inseridos em tab_raw.", len(registros)
-            )
+        count = conn.execute("SELECT count(*) FROM tab_raw").fetchone()[0]
+        logger.info("tab_raw agora tem %d registros no total.", count)
     finally:
         conn.close()
 
-    return len(registros)
+    return len(dados)
 
 
 # ---------------------------------------------------------------------------
-# DAG Definition
+# DAG
 # ---------------------------------------------------------------------------
 default_args = {
     "owner": "rpe",
     "retries": 1,
     "retry_delay": timedelta(minutes=2),
-    "email_on_failure": False,
-    "email_on_retry": False,
 }
 
 with DAG(
     dag_id="bcb_selic_pipeline",
     default_args=default_args,
-    description="Pipeline BCB Selic: API → tab_raw → Pentaho PDI → tab_final",
-    schedule_interval=None,  # Trigger manual
+    description="BCB Selic: API -> DuckDB(raw) -> Pentaho(final) -> dbt(gold)",
+    schedule_interval=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=["bcb", "selic", "erp", "rpe"],
+    tags=["bcb", "selic", "rpe"],
 ) as dag:
 
-    # Task 1: Python — Extração e carga raw
-    task_extract_load = PythonOperator(
+    task_extract = PythonOperator(
         task_id="extract_and_load_raw",
         python_callable=extract_and_load_raw,
-        provide_context=True,
     )
 
-    # Task 2: Bash — Execução do Pentaho PDI
     task_pentaho = BashOperator(
         task_id="run_pentaho_transform",
         bash_command=PENTAHO_CMD,
     )
 
-    # Dependência: primeiro extrai, depois transforma
-    task_extract_load >> task_pentaho
+    task_dbt = BashOperator(
+        task_id="run_dbt",
+        bash_command=DBT_CMD,
+    )
+
+    task_extract >> task_pentaho >> task_dbt

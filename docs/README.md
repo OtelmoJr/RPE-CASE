@@ -1,4 +1,4 @@
-# Case ERP: Pipeline Airflow + Pentaho PDI
+# Case RPE: Pipeline Airflow + Pentaho PDI
 
 Pipeline de dados que ingere a **taxa Selic diária** (série 11) da API do Banco Central do Brasil, carrega os dados brutos em `tab_raw` (PostgreSQL) e executa uma transformação Pentaho PDI com **7 operações** que grava o resultado em `tab_final`. Tudo orquestrado pelo Apache Airflow e containerizado com Docker Compose.
 

@@ -32,3 +32,12 @@ Thumbs.db
 # Pentaho
 pentaho/data-integration/
 *.log
+
+# DuckDB
+data/*.duckdb
+data/*.duckdb.wal
+
+# dbt
+dbt_selic/target/
+dbt_selic/logs/
+dbt_selic/dbt_packages/

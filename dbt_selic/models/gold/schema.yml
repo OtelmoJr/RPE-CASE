@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: tab_gold_selic_analytics
+    description: >
+      Agregacao mensal da Selic para analise executiva.
+      Consolida os dados diarios da tab_final em metricas mensais
+      uteis pra precificacao de CDC/BNPL e acompanhamento de tendencia.
+    columns:
+      - name: referencia
+        description: "Primeiro dia do mes (chave da agregacao)"
+        tests:
+          - not_null
+          - unique
+      - name: selic_media_diaria
+        description: "Media da taxa diaria no mes"
+        tests:
+          - not_null
+      - name: selic_media_anualizada
+        description: "Media da taxa anualizada no mes"
+        tests:
+          - not_null
+      - name: selic_min_anualizada
+        description: "Menor taxa anualizada registrada no mes"
+      - name: selic_max_anualizada
+        description: "Maior taxa anualizada registrada no mes"
+      - name: variacao_mensal
+        description: "Diferenca entre max e min anualizada — mede dispersao"
+      - name: dias_uteis_mes
+        description: "Quantidade de dias uteis com cotacao no mes"
+        tests:
+          - not_null
+      - name: classificacao_predominante
+        description: "Classificacao mais frequente no mes (ALTA/MODERADA/BAIXA)"
+        tests:
+          - accepted_values:
+              values: ['ALTA', 'MODERADA', 'BAIXA']
+      - name: estabilidade
+        description: "VOLATIL se variacao > 0.5pp, ESTAVEL caso contrario"
+        tests:
+          - accepted_values:
+              values: ['VOLATIL', 'ESTAVEL']
