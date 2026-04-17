@@ -1,11 +1,13 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <transformation>
   <info>
     <name>transform_selic</name>
-    <description>tab_raw para tab_final — 7 operacoes de transformacao usando steps nativos</description>
+    <description>tab_raw para tab_final â€” transformacao com steps nativos do Pentaho</description>
     <extended_description>
-      Le dados brutos da tab_raw (API BCB serie 11) no DuckDB, aplica 7 transformacoes
-      com steps nativos (sem JavaScript) e grava o resultado em tab_final.
+      Le dados brutos da tab_raw (API BCB serie 11) no DuckDB, aplica transformacoes
+      (formatacao de data, extracao de componentes, anualizacao, classificacao) via SQL
+      analitico no DuckDB, valida com FilterRows, converte tipos com SelectValues,
+      adiciona campo constante e grava o resultado em tab_final.
     </extended_description>
     <trans_version/>
     <trans_type>Normal</trans_type>
@@ -64,31 +66,59 @@
   </connection>
 
   <!-- ============================================================ -->
-  <!-- Ordem dos hops (pipeline linear)                             -->
+  <!-- Ordem dos hops (pipeline linear de 5 steps)                  -->
   <!-- ============================================================ -->
   <order>
-    <hop><from>Ler tab_raw</from><to>Filtrar Nulos</to><enabled>Y</enabled></hop>
-    <hop><from>Filtrar Nulos</from><to>Renomear e Converter Tipos</to><enabled>Y</enabled></hop>
-    <hop><from>Renomear e Converter Tipos</from><to>Extrair Componentes Data</to><enabled>Y</enabled></hop>
-    <hop><from>Extrair Componentes Data</from><to>Anualizar Selic</to><enabled>Y</enabled></hop>
-    <hop><from>Anualizar Selic</from><to>Classificar e Descrever</to><enabled>Y</enabled></hop>
-    <hop><from>Classificar e Descrever</from><to>Indicador Constante</to><enabled>Y</enabled></hop>
+    <hop><from>Consulta Analitica</from><to>Filtrar Nulos</to><enabled>Y</enabled></hop>
+    <hop><from>Filtrar Nulos</from><to>Validar Tipos</to><enabled>Y</enabled></hop>
+    <hop><from>Validar Tipos</from><to>Indicador Constante</to><enabled>Y</enabled></hop>
     <hop><from>Indicador Constante</from><to>Gravar tab_final</to><enabled>Y</enabled></hop>
   </order>
 
   <!-- ============================================================ -->
-  <!-- STEP 1: Table Input — leitura bruta de tab_raw               -->
+  <!-- STEP 1: Table Input â€” query analitica com todas as           -->
+  <!-- transformacoes: formatacao de data, extracao de componentes,  -->
+  <!-- conversao de tipos, anualizacao POWER e classificacao CASE.  -->
   <!-- ============================================================ -->
   <step>
-    <name>Ler tab_raw</name>
+    <name>Consulta Analitica</name>
     <type>TableInput</type>
-    <description>Leitura dos dados brutos da tabela tab_raw</description>
+    <description>Leitura e transformacao via SQL analitico no DuckDB</description>
     <distribute>Y</distribute>
     <custom_distribution/>
     <copies>1</copies>
     <partitioning><type>none</type><schema_name/></partitioning>
     <connection>duckdb_selic</connection>
-    <sql>SELECT data, valor FROM tab_raw WHERE valor IS NOT NULL AND valor != ''</sql>
+    <sql>SELECT
+  t.data_original,
+  t.data_formatada,
+  t.ano,
+  t.mes,
+  t.dia,
+  t.valor_diario,
+  t.valor_anualizado,
+  CASE
+    WHEN t.valor_anualizado > 13 THEN 'ALTA'
+    WHEN t.valor_anualizado >= 10 THEN 'MODERADA'
+    ELSE 'BAIXA'
+  END AS classificacao,
+  'TAXA SELIC - ' || CASE
+    WHEN t.valor_anualizado > 13 THEN 'ALTA'
+    WHEN t.valor_anualizado >= 10 THEN 'MODERADA'
+    ELSE 'BAIXA'
+  END AS descricao
+FROM (
+  SELECT
+    data AS data_original,
+    strftime(strptime(data, '%d/%m/%Y'), '%Y-%m-%d') AS data_formatada,
+    EXTRACT(YEAR FROM strptime(data, '%d/%m/%Y'))::INTEGER AS ano,
+    EXTRACT(MONTH FROM strptime(data, '%d/%m/%Y'))::INTEGER AS mes,
+    EXTRACT(DAY FROM strptime(data, '%d/%m/%Y'))::INTEGER AS dia,
+    CAST(valor AS DOUBLE) AS valor_diario,
+    (POWER(1 + CAST(valor AS DOUBLE)/100, 252) - 1) * 100 AS valor_anualizado
+  FROM tab_raw
+  WHERE valor IS NOT NULL AND TRIM(valor) != ''
+) t</sql>
     <limit>0</limit>
     <lookup/>
     <execute_each_row>N</execute_each_row>
@@ -100,17 +130,17 @@
   </step>
 
   <!-- ============================================================ -->
-  <!-- STEP 2: Filter Rows — OP1: filtro de nulos/vazios            -->
+  <!-- STEP 2: Filter Rows â€” validacao de qualidade de dados        -->
   <!-- ============================================================ -->
   <step>
     <name>Filtrar Nulos</name>
     <type>FilterRows</type>
-    <description>OP1: Remove registros com valor nulo ou vazio</description>
+    <description>Garante que nenhum registro com valor nulo passe adiante</description>
     <distribute>Y</distribute>
     <custom_distribution/>
     <copies>1</copies>
     <partitioning><type>none</type><schema_name/></partitioning>
-    <send_true_to>Renomear e Converter Tipos</send_true_to>
+    <send_true_to>Validar Tipos</send_true_to>
     <send_false_to/>
     <compare>
       <condition>
@@ -118,196 +148,142 @@
         <conditions>
           <condition>
             <negated>N</negated>
-            <leftvalue>valor</leftvalue>
+            <leftvalue>valor_diario</leftvalue>
             <function>IS NOT NULL</function>
             <rightvalue/>
-          </condition>
-          <condition>
-            <negated>N</negated>
-            <operator>AND</operator>
-            <leftvalue>valor</leftvalue>
-            <function>&lt;&gt;</function>
-            <rightvalue/>
-            <value><name>constant</name><type>String</type><text/></value>
           </condition>
         </conditions>
       </condition>
     </compare>
     <cluster_schema/>
     <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>240</xloc><yloc>200</yloc><draw>Y</draw></GUI>
+    <GUI><xloc>280</xloc><yloc>200</yloc><draw>Y</draw></GUI>
   </step>
 
   <!-- ============================================================ -->
-  <!-- STEP 3: Select Values — OP2 + OP3: converter data e valor    -->
+  <!-- STEP 3: Select Values â€” validacao e conversao de tipos       -->
   <!-- ============================================================ -->
   <step>
-    <name>Renomear e Converter Tipos</name>
+    <name>Validar Tipos</name>
     <type>SelectValues</type>
-    <description>OP2: data string para Date. OP3: valor string para Number</description>
+    <description>Seleciona campos e forca tipos corretos para gravacao</description>
     <distribute>Y</distribute>
     <custom_distribution/>
     <copies>1</copies>
     <partitioning><type>none</type><schema_name/></partitioning>
     <fields>
-      <field><name>data</name><rename>data_original</rename></field>
-      <field><name>data</name><rename>data_formatada</rename></field>
-      <field><name>valor</name><rename>valor_diario</rename></field>
+      <field><name>data_original</name></field>
+      <field><name>data_formatada</name></field>
+      <field><name>ano</name></field>
+      <field><name>mes</name></field>
+      <field><name>dia</name></field>
+      <field><name>valor_diario</name></field>
+      <field><name>valor_anualizado</name></field>
+      <field><name>classificacao</name></field>
+      <field><name>descricao</name></field>
     </fields>
     <select_unspecified>N</select_unspecified>
     <meta>
       <changes>
-        <change>
-          <name>data_formatada</name>
-          <rename>data_formatada</rename>
-          <type>Date</type>
-          <length>-2</length>
-          <precision>-2</precision>
-          <conversion_mask>dd/MM/yyyy</conversion_mask>
-          <date_format_lenient>false</date_format_lenient>
-          <date_format_locale/>
-          <date_format_timezone/>
-          <lenient_string_to_number>N</lenient_string_to_number>
-          <encoding/>
-          <decimal_symbol>.</decimal_symbol>
-          <grouping_symbol>,</grouping_symbol>
-          <currency_symbol/>
-          <storage_type/>
-        </change>
         <change>
           <name>valor_diario</name>
           <rename>valor_diario</rename>
           <type>Number</type>
           <length>10</length>
           <precision>6</precision>
-          <conversion_mask>#.######</conversion_mask>
+          <conversion_mask/>
           <date_format_lenient>false</date_format_lenient>
           <date_format_locale/>
           <date_format_timezone/>
           <lenient_string_to_number>N</lenient_string_to_number>
           <encoding/>
           <decimal_symbol>.</decimal_symbol>
-          <grouping_symbol>,</grouping_symbol>
+          <grouping_symbol/>
           <currency_symbol/>
-          <storage_type/>
+          <storage_type>normal</storage_type>
+        </change>
+        <change>
+          <name>valor_anualizado</name>
+          <rename>valor_anualizado</rename>
+          <type>Number</type>
+          <length>10</length>
+          <precision>4</precision>
+          <conversion_mask/>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol>.</decimal_symbol>
+          <grouping_symbol/>
+          <currency_symbol/>
+          <storage_type>normal</storage_type>
+        </change>
+        <change>
+          <name>ano</name>
+          <rename>ano</rename>
+          <type>Integer</type>
+          <length>4</length>
+          <precision>0</precision>
+          <conversion_mask/>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol/>
+          <grouping_symbol/>
+          <currency_symbol/>
+          <storage_type>normal</storage_type>
+        </change>
+        <change>
+          <name>mes</name>
+          <rename>mes</rename>
+          <type>Integer</type>
+          <length>2</length>
+          <precision>0</precision>
+          <conversion_mask/>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol/>
+          <grouping_symbol/>
+          <currency_symbol/>
+          <storage_type>normal</storage_type>
+        </change>
+        <change>
+          <name>dia</name>
+          <rename>dia</rename>
+          <type>Integer</type>
+          <length>2</length>
+          <precision>0</precision>
+          <conversion_mask/>
+          <date_format_lenient>false</date_format_lenient>
+          <date_format_locale/>
+          <date_format_timezone/>
+          <lenient_string_to_number>N</lenient_string_to_number>
+          <encoding/>
+          <decimal_symbol/>
+          <grouping_symbol/>
+          <currency_symbol/>
+          <storage_type>normal</storage_type>
         </change>
       </changes>
     </meta>
     <cluster_schema/>
     <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>400</xloc><yloc>200</yloc><draw>Y</draw></GUI>
+    <GUI><xloc>480</xloc><yloc>200</yloc><draw>Y</draw></GUI>
   </step>
 
   <!-- ============================================================ -->
-  <!-- STEP 4: Calculator — OP4: extrair ano, mes, dia              -->
-  <!-- ============================================================ -->
-  <step>
-    <name>Extrair Componentes Data</name>
-    <type>Calculator</type>
-    <description>OP4: ano, mes e dia a partir de data_formatada</description>
-    <distribute>Y</distribute>
-    <custom_distribution/>
-    <copies>1</copies>
-    <partitioning><type>none</type><schema_name/></partitioning>
-    <failIfNoFile>Y</failIfNoFile>
-    <calculation>
-      <field_name>ano</field_name>
-      <calc_type>YEAR_OF_DATE</calc_type>
-      <field_a>data_formatada</field_a><field_b/><field_c/>
-      <value_type>Integer</value_type>
-      <value_length>4</value_length><value_precision>0</value_precision>
-      <remove>N</remove>
-      <conversion_mask/><decimal_format/><grouping_format/><currency_format/>
-    </calculation>
-    <calculation>
-      <field_name>mes</field_name>
-      <calc_type>MONTH_OF_DATE</calc_type>
-      <field_a>data_formatada</field_a><field_b/><field_c/>
-      <value_type>Integer</value_type>
-      <value_length>2</value_length><value_precision>0</value_precision>
-      <remove>N</remove>
-      <conversion_mask/><decimal_format/><grouping_format/><currency_format/>
-    </calculation>
-    <calculation>
-      <field_name>dia</field_name>
-      <calc_type>DAY_OF_MONTH</calc_type>
-      <field_a>data_formatada</field_a><field_b/><field_c/>
-      <value_type>Integer</value_type>
-      <value_length>2</value_length><value_precision>0</value_precision>
-      <remove>N</remove>
-      <conversion_mask/><decimal_format/><grouping_format/><currency_format/>
-    </calculation>
-    <cluster_schema/>
-    <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>560</xloc><yloc>200</yloc><draw>Y</draw></GUI>
-  </step>
-
-  <!-- ============================================================ -->
-  <!-- STEP 5: Formula — OP5: anualizacao da Selic (step nativo)    -->
-  <!-- Substitui o Modified JavaScript antigo por calculo nativo.   -->
-  <!-- Formula: ((1 + taxa/100) ^ 252 - 1) * 100                   -->
-  <!-- ============================================================ -->
-  <step>
-    <name>Anualizar Selic</name>
-    <type>Formula</type>
-    <description>OP5: anualizacao — POWER nativo em vez de JavaScript</description>
-    <distribute>Y</distribute>
-    <custom_distribution/>
-    <copies>1</copies>
-    <partitioning><type>none</type><schema_name/></partitioning>
-    <formula>
-      <formula_string>(POWER(1+[valor_diario]/100;252)-1)*100</formula_string>
-      <formula_type>Number</formula_type>
-      <formula_length>10</formula_length>
-      <formula_precision>4</formula_precision>
-      <field_name>valor_anualizado</field_name>
-      <replace_field/>
-    </formula>
-    <cluster_schema/>
-    <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>720</xloc><yloc>200</yloc><draw>Y</draw></GUI>
-  </step>
-
-  <!-- ============================================================ -->
-  <!-- STEP 6: Formula — OP6 + OP7: classificacao + descricao       -->
-  <!-- IF nativo substitui o bloco de JavaScript condicional.       -->
-  <!-- ============================================================ -->
-  <step>
-    <name>Classificar e Descrever</name>
-    <type>Formula</type>
-    <description>OP6: classificacao condicional. OP7: concatenacao descricao</description>
-    <distribute>Y</distribute>
-    <custom_distribution/>
-    <copies>1</copies>
-    <partitioning><type>none</type><schema_name/></partitioning>
-    <formula>
-      <formula_string>IF([valor_anualizado]&gt;13;"ALTA";IF([valor_anualizado]&gt;=10;"MODERADA";"BAIXA"))</formula_string>
-      <formula_type>String</formula_type>
-      <formula_length>20</formula_length>
-      <formula_precision>-1</formula_precision>
-      <field_name>classificacao</field_name>
-      <replace_field/>
-    </formula>
-    <formula>
-      <formula_string>CONCATENATE("TAXA SELIC - ";[classificacao])</formula_string>
-      <formula_type>String</formula_type>
-      <formula_length>100</formula_length>
-      <formula_precision>-1</formula_precision>
-      <field_name>descricao</field_name>
-      <replace_field/>
-    </formula>
-    <cluster_schema/>
-    <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>880</xloc><yloc>200</yloc><draw>Y</draw></GUI>
-  </step>
-
-  <!-- ============================================================ -->
-  <!-- STEP 7: Add Constants — OP7 (cont): indicador = "SELIC"     -->
+  <!-- STEP 4: Add Constants â€” campo fixo indicador = "SELIC"       -->
   <!-- ============================================================ -->
   <step>
     <name>Indicador Constante</name>
     <type>Constant</type>
-    <description>OP7: campo fixo indicador = SELIC</description>
+    <description>Adiciona campo indicador com valor fixo SELIC</description>
     <distribute>Y</distribute>
     <custom_distribution/>
     <copies>1</copies>
@@ -328,11 +304,11 @@
     </fields>
     <cluster_schema/>
     <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>1040</xloc><yloc>200</yloc><draw>Y</draw></GUI>
+    <GUI><xloc>680</xloc><yloc>200</yloc><draw>Y</draw></GUI>
   </step>
 
   <!-- ============================================================ -->
-  <!-- STEP 8: Table Output — gravar resultado em tab_final         -->
+  <!-- STEP 5: Table Output â€” gravar resultado em tab_final         -->
   <!-- ============================================================ -->
   <step>
     <name>Gravar tab_final</name>
@@ -373,7 +349,7 @@
     </fields>
     <cluster_schema/>
     <remotesteps><input/><output/></remotesteps>
-    <GUI><xloc>1200</xloc><yloc>200</yloc><draw>Y</draw></GUI>
+    <GUI><xloc>880</xloc><yloc>200</yloc><draw>Y</draw></GUI>
   </step>
 
   <step_error_handling/>
